@@ -417,21 +417,17 @@ int main(int argc, char **argv)
 {
 	FILE *f;
 	char buf[BUFSIZ];
-	int i, cur_size;
+	int cur_size;
 	int sizes[] = { 7919, 8000, 104729 };
 	struct method *m[MAX_METHODS] = { NULL, };
 
 	sched_setup();
 
 	if (2 > argc) {
-		usage();
+		puts("Provide the file to read values to hash from");
 		exit(0);
 	}
 
-	i = 1;
-	while (i++ <= argc) {
-		printf("%d\n", argv[i]);
-	}
 	for (cur_size = 0; cur_size < ARRAY_SIZE(sizes); cur_size++) {
 		m[0] = method_init("crc", sizes[cur_size], crc_encode);
 		m[1] = method_init("md4", sizes[cur_size], md4_encode);
