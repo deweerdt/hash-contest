@@ -12,7 +12,7 @@
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]))
 #define MAX_COLL 1024
 
-static inline unsigned long long rdtsc()
+static inline unsigned long long rdtsc(void)
 {
 	unsigned long long x;
 	asm volatile("rdtsc":"=A"(x));
@@ -107,7 +107,7 @@ static void method_free(struct method *m)
 	free(m);
 }
 
-void method_dump_stats(struct method *m)
+static void method_dump_stats(struct method *m)
 {
 	int *collisions;
 	int i;
@@ -147,44 +147,44 @@ void method_dump_stats(struct method *m)
 	free(collisions);
 }
 
-unsigned long rand_encode(unsigned char *buf, size_t size)
+static unsigned long rand_encode(unsigned char *buf, size_t size)
 {
 	return random();
 }
 
-unsigned long sha1_encode(unsigned char *buf, size_t size)
+static unsigned long sha1_encode(unsigned char *buf, size_t size)
 {
 	uint8_t sha1[SHA_DIGEST_LENGTH];
 	SHA1((unsigned char *)buf, size, sha1);
 	return *(unsigned long *)sha1;
 }
 
-unsigned long md4_encode(unsigned char *buf, size_t size)
+static unsigned long md4_encode(unsigned char *buf, size_t size)
 {
 	uint8_t md4[MD4_DIGEST_LENGTH];
 	MD4((unsigned char *)buf, size, md4);
 	return *(unsigned long *)md4;
 }
 
-unsigned long crc_encode(unsigned char *buf, size_t size)
+static unsigned long crc_encode(unsigned char *buf, size_t size)
 {
 	unsigned long crc;
 	crc = crc32(0, (unsigned char *)buf, size);
 	return crc;
 }
 
-unsigned long crc_high_encode(unsigned char *buf, size_t size)
+static unsigned long crc_high_encode(unsigned char *buf, size_t size)
 {
 	return crc_encode(buf, size) >> (sizeof(unsigned long) / 2);
 }
 
-unsigned long crc_low_encode(unsigned char *buf, size_t size)
+ __attribute__((unused)) static unsigned long crc_low_encode(unsigned char *buf, size_t size)
 {
 	unsigned long mask =  (1 << (sizeof(unsigned long) / 2)) - 1;
 	return crc_encode(buf, size) & mask;
 }
 
-unsigned long khash_encode(unsigned char *s, size_t size)
+static unsigned long khash_encode(unsigned char *s, size_t size)
 {
 	unsigned long h = *s;
 	if (!h)
@@ -212,7 +212,7 @@ static inline uint32_t hash_long(uint32_t val, unsigned int bits)
 
 
 #define BITS_PER_LONG (sizeof(long) * 8)
-unsigned long linux_kernel_encode(unsigned char *buf, size_t size)
+ __attribute__((unused)) static unsigned long linux_kernel_encode(unsigned char *buf, size_t size)
 {
 	unsigned long hash = 0;
 	unsigned long l = 0;
@@ -234,7 +234,7 @@ unsigned long linux_kernel_encode(unsigned char *buf, size_t size)
 
 }
 
-unsigned long libc_encode(unsigned char *buf, size_t size)
+ __attribute__((unused)) static unsigned long libc_encode(unsigned char *buf, size_t size)
 {
 	unsigned long hval;
 	unsigned int count;
@@ -251,7 +251,7 @@ unsigned long libc_encode(unsigned char *buf, size_t size)
 	return hval;
 }
 
-unsigned long murmur_encode(unsigned char * key, size_t len)
+static unsigned long murmur_encode(unsigned char * key, size_t len)
 {
 	// 'm' and 'r' are mixing constants generated offline.
 	// They're not really 'magic', they just happen to work well.
@@ -303,7 +303,7 @@ unsigned long murmur_encode(unsigned char * key, size_t len)
 }
 
 #define FNV_32_PRIME (0x01000193UL)
-unsigned long fnv1_encode(unsigned char *buf, size_t len)
+static unsigned long fnv1_encode(unsigned char *buf, size_t len)
 {
 	unsigned long hval = FNV_32_PRIME;
 	unsigned char *bp = (unsigned char *)buf;	/* start of buffer */
@@ -330,7 +330,7 @@ unsigned long fnv1_encode(unsigned char *buf, size_t len)
 }
 
 
-unsigned long jenkins_encode(unsigned char *key, size_t key_len)
+static unsigned long jenkins_encode(unsigned char *key, size_t key_len)
 {
     uint32_t hash = 0;
     size_t i;
@@ -356,7 +356,7 @@ unsigned long jenkins_encode(unsigned char *key, size_t key_len)
                        +(uint32_t)(((const uint8_t *)(d))[0]) )
 #endif
 
-unsigned long super_fast_hash_encode(unsigned char * data, size_t len)
+static unsigned long super_fast_hash_encode(unsigned char * data, size_t len)
 {
 	uint32_t hash = len, tmp;
 	int rem;
@@ -417,26 +417,34 @@ int main(int argc, char **argv)
 {
 	FILE *f;
 	char buf[BUFSIZ];
-	int i = 0, cur_size;
-	int SIZES[] = { 7919, 8000, 104729 };
+	int i, cur_size;
+	int sizes[] = { 7919, 8000, 104729 };
 	struct method *m[MAX_METHODS] = { NULL, };
 
 	sched_setup();
 
+	if (2 > argc) {
+		usage();
+		exit(0);
+	}
 
-	for (cur_size = 0; cur_size < ARRAY_SIZE(SIZES); cur_size++) {
-		m[0] = method_init("crc", SIZES[cur_size], crc_encode);
-		m[1] = method_init("md4", SIZES[cur_size], md4_encode);
-		m[2] = method_init("sha1", SIZES[cur_size], sha1_encode);
-		m[3] = method_init("rand", SIZES[cur_size], rand_encode);
-		m[4] = method_init("crc_high", SIZES[cur_size], crc_high_encode);
-		m[5] = method_init("khash", SIZES[cur_size], khash_encode);
-		m[6] = method_init("murmur", SIZES[cur_size], murmur_encode);
-		m[7] = method_init("fnv1", SIZES[cur_size], fnv1_encode);
-		m[8] = method_init("jenkins", SIZES[cur_size], jenkins_encode);
-		m[9] = method_init("sfh", SIZES[cur_size], super_fast_hash_encode);
-		//m[7] = method_init("crc_low", SIZES[cur_size], crc_low_encode);
-		//m[7] = method_init("libc", SIZES[cur_size], libc_encode);
+	i = 1;
+	while (i++ <= argc) {
+		printf("%d\n", argv[i]);
+	}
+	for (cur_size = 0; cur_size < ARRAY_SIZE(sizes); cur_size++) {
+		m[0] = method_init("crc", sizes[cur_size], crc_encode);
+		m[1] = method_init("md4", sizes[cur_size], md4_encode);
+		m[2] = method_init("sha1", sizes[cur_size], sha1_encode);
+		m[3] = method_init("rand", sizes[cur_size], rand_encode);
+		m[4] = method_init("crc_high", sizes[cur_size], crc_high_encode);
+		m[5] = method_init("khash", sizes[cur_size], khash_encode);
+		m[6] = method_init("murmur", sizes[cur_size], murmur_encode);
+		m[7] = method_init("fnv1", sizes[cur_size], fnv1_encode);
+		m[8] = method_init("jenkins", sizes[cur_size], jenkins_encode);
+		m[9] = method_init("sfh", sizes[cur_size], super_fast_hash_encode);
+		//m[7] = method_init("crc_low", sizes[cur_size], crc_low_encode);
+		//m[7] = method_init("libc", sizes[cur_size], libc_encode);
 
 		f = fopen(argv[1], "r");
 		if (!f) {
@@ -448,7 +456,6 @@ int main(int argc, char **argv)
 			FOREACH_METHOD(meth, m) {
 				method_hash(meth, (unsigned char *)buf, strlen(buf));
 			} ENDFOREACH_METHOD();
-			i++;
 		}
 
 		FOREACH_METHOD(meth, m) {
