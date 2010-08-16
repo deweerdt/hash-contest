@@ -88,7 +88,7 @@ struct timespec ts_diff(struct timespec start, struct timespec end)
 	return temp;
 }
 
-unsigned long long ts_2_ms(struct timespec *ts)
+unsigned long long ts_2_ns(struct timespec *ts)
 {
 	return (ts->tv_sec * 1000000000) + ts->tv_nsec;
 }
@@ -150,7 +150,7 @@ static void method_dump_stats(struct method *m)
 	}
 	puts("");
 
-	printf("avg. ticks: %lld, ", m->avg_process_time);
+	printf("avg. time: %lld ns, ", m->avg_process_time);
 	printf("total collisions: %d\n", m->total_collisions);
 	puts("");
 	free(collisions);
@@ -484,7 +484,7 @@ int main(int argc, char **argv)
 			}
 			clock_gettime(CLOCK_MONOTONIC, &after);
 			diff = ts_diff(before, after);
-			meth->avg_process_time = ts_2_ms(&diff) / meth->samples;
+			meth->avg_process_time = ts_2_ns(&diff) / meth->samples;
 			rewind(f);
 		} ENDFOREACH();
 
