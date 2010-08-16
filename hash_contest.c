@@ -8,16 +8,11 @@
 #include <stdint.h>
 #include <openssl/md4.h>
 #include <openssl/sha.h>
+#include <time.h>
+
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]))
 #define MAX_COLL 1024
-
-static inline unsigned long long rdtsc(void)
-{
-	unsigned long long x;
-	asm volatile("rdtsc":"=A"(x));
-	return x;
-}
 
 static void sched_setup(void)
 {
@@ -80,16 +75,30 @@ static struct method *method_init(char *name, size_t nb_buckets, tencode encode)
 	return m;
 }
 
+struct timespec ts_diff(struct timespec start, struct timespec end)
+{
+	struct timespec temp;
+	if ((end.tv_nsec-start.tv_nsec)<0) {
+		temp.tv_sec = end.tv_sec-start.tv_sec-1;
+		temp.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec;
+	} else {
+		temp.tv_sec = end.tv_sec-start.tv_sec;
+		temp.tv_nsec = end.tv_nsec-start.tv_nsec;
+	}
+	return temp;
+}
+
+unsigned long long ts_2_ms(struct timespec *ts)
+{
+	return (ts->tv_sec * 1000000000) + ts->tv_nsec;
+}
+
 static void method_hash(struct method *m, unsigned char *buf, size_t size)
 {
 	unsigned long hash, bucket;
-	unsigned long long after, before;
 
-	before = rdtsc();
-	hash = m->encode(buf, strlen((char *)buf));
-	after = rdtsc();
+	hash = m->encode(buf, size);
 
-	m->avg_process_time = (m->avg_process_time * m->samples + (after - before)) / (m->samples + 1);
 	m->samples++;
 
 	bucket = hash % m->nb_buckets;
@@ -155,15 +164,17 @@ static unsigned long rand_encode(unsigned char *buf, size_t size)
 static unsigned long sha1_encode(unsigned char *buf, size_t size)
 {
 	uint8_t sha1[SHA_DIGEST_LENGTH];
+	unsigned long *p = (void *)sha1;
 	SHA1((unsigned char *)buf, size, sha1);
-	return *(unsigned long *)sha1;
+	return *p;
 }
 
 static unsigned long md4_encode(unsigned char *buf, size_t size)
 {
 	uint8_t md4[MD4_DIGEST_LENGTH];
+	unsigned long *p = (void *)md4;
 	MD4((unsigned char *)buf, size, md4);
-	return *(unsigned long *)md4;
+	return *p;
 }
 
 static unsigned long crc_encode(unsigned char *buf, size_t size)
@@ -176,12 +187,6 @@ static unsigned long crc_encode(unsigned char *buf, size_t size)
 static unsigned long crc_high_encode(unsigned char *buf, size_t size)
 {
 	return crc_encode(buf, size) >> (sizeof(unsigned long) / 2);
-}
-
- __attribute__((unused)) static unsigned long crc_low_encode(unsigned char *buf, size_t size)
-{
-	unsigned long mask =  (1 << (sizeof(unsigned long) / 2)) - 1;
-	return crc_encode(buf, size) & mask;
 }
 
 static unsigned long khash_encode(unsigned char *s, size_t size)
@@ -403,14 +408,32 @@ static unsigned long super_fast_hash_encode(unsigned char * data, size_t len)
 	return hash;
 }
 
+/*
+  Bacula project hash.c file:
+  http://www.koders.com/c/fidBD2D6E36FB86821D1E65D1AFBB0E557896B14C7E.aspx?s=worker_main
+ */
+static unsigned long bacula_hash(unsigned char * data, size_t len)
+{
+	int i=0;
+	int hashvalue;
+	size_t n = len;
+
+	for (n=0; n<len; n++) {
+		i=(i<<3)+(*data++ - '0');
+	}
+
+	hashvalue = (i*1103515249);
+
+	return hashvalue >> (sizeof(unsigned long) / 4);
+}
 
 
-#define FOREACH_METHOD(ele, array) do { \
+#define FOREACH(ele, array) do { \
 	int n; \
 	typeof(array[0]) ele; \
 	for (n = 0; ele = array[n], ele != NULL; n++)
 
-#define ENDFOREACH_METHOD() } while (0);
+#define ENDFOREACH() } while (0);
 #define MAX_METHODS 100
 
 int main(int argc, char **argv)
@@ -418,7 +441,7 @@ int main(int argc, char **argv)
 	FILE *f;
 	char buf[BUFSIZ];
 	int cur_size;
-	int sizes[] = { 7919, 8000, 104729 };
+	int sizes[] = { 7919, 104729 };
 	struct method *m[MAX_METHODS] = { NULL, };
 
 	sched_setup();
@@ -429,6 +452,8 @@ int main(int argc, char **argv)
 	}
 
 	for (cur_size = 0; cur_size < ARRAY_SIZE(sizes); cur_size++) {
+		struct timespec after, before, diff;
+
 		m[0] = method_init("crc", sizes[cur_size], crc_encode);
 		m[1] = method_init("md4", sizes[cur_size], md4_encode);
 		m[2] = method_init("sha1", sizes[cur_size], sha1_encode);
@@ -439,8 +464,8 @@ int main(int argc, char **argv)
 		m[7] = method_init("fnv1", sizes[cur_size], fnv1_encode);
 		m[8] = method_init("jenkins", sizes[cur_size], jenkins_encode);
 		m[9] = method_init("sfh", sizes[cur_size], super_fast_hash_encode);
-		//m[7] = method_init("crc_low", sizes[cur_size], crc_low_encode);
-		//m[7] = method_init("libc", sizes[cur_size], libc_encode);
+		m[10] = method_init("bacula hash", sizes[cur_size], bacula_hash);
+		m[12] = method_init("libc", sizes[cur_size], libc_encode);
 
 		f = fopen(argv[1], "r");
 		if (!f) {
@@ -448,19 +473,29 @@ int main(int argc, char **argv)
 			exit(-1);
 		}
 
-		while(fgets(buf, sizeof(buf), f)) {
-			FOREACH_METHOD(meth, m) {
+		/* Preload file */
+		while(fgets(buf, sizeof(buf), f)) { }
+		rewind(f);
+
+		FOREACH(meth, m) {
+			clock_gettime(CLOCK_MONOTONIC, &before);
+			while(fgets(buf, sizeof(buf), f)) {
 				method_hash(meth, (unsigned char *)buf, strlen(buf));
-			} ENDFOREACH_METHOD();
-		}
+			}
+			clock_gettime(CLOCK_MONOTONIC, &after);
+			diff = ts_diff(before, after);
+			meth->avg_process_time = ts_2_ms(&diff) / meth->samples;
+			rewind(f);
+		} ENDFOREACH();
 
-		FOREACH_METHOD(meth, m) {
+
+		FOREACH(meth, m) {
 			method_dump_stats(meth);
-		} ENDFOREACH_METHOD();
+		} ENDFOREACH();
 
-		FOREACH_METHOD(meth, m) {
+		FOREACH(meth, m) {
 			method_free(meth);
-		} ENDFOREACH_METHOD();
+		} ENDFOREACH();
 
 		puts("=========================================");
 
