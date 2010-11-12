@@ -1,4 +1,3 @@
-#define _GNU_SOURCE
 #include <sched.h>
 #include <stdio.h>
 #include <zlib.h>
@@ -10,6 +9,8 @@
 #include <openssl/sha.h>
 #include <time.h>
 
+#include "loopkup3.c"
+#include "MurmurHash3.cpp"
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]))
 #define MAX_COLL 1024
@@ -58,11 +59,11 @@ struct method {
 static struct method *method_init(char *name, size_t nb_buckets, tencode encode)
 {
 	struct method *m;
-	m = calloc(1, sizeof(*m));
+	m = (struct method *)calloc(1, sizeof(*m));
 	if (!m)
 		return NULL;
 
-	m->bucket = calloc(sizeof(unsigned int), nb_buckets);
+	m->bucket = (unsigned int *)calloc(sizeof(unsigned int), nb_buckets);
 	if (!m->bucket) {
 		free(m);
 		return NULL;
@@ -122,7 +123,7 @@ static void method_dump_stats(struct method *m)
 	int i;
 	int max_coll = 0;
 
-	collisions = calloc(sizeof(int), MAX_COLL);
+	collisions = (int *)calloc(sizeof(int), MAX_COLL);
 
 	for (i = 0; i < m->nb_buckets; i++) {
 		int coll;
@@ -164,7 +165,7 @@ static unsigned long rand_encode(unsigned char *buf, size_t size)
 static unsigned long sha1_encode(unsigned char *buf, size_t size)
 {
 	uint8_t sha1[SHA_DIGEST_LENGTH];
-	unsigned long *p = (void *)sha1;
+	unsigned long *p = (unsigned long *)sha1;
 	SHA1((unsigned char *)buf, size, sha1);
 	return *p;
 }
@@ -172,9 +173,178 @@ static unsigned long sha1_encode(unsigned char *buf, size_t size)
 static unsigned long md4_encode(unsigned char *buf, size_t size)
 {
 	uint8_t md4[MD4_DIGEST_LENGTH];
-	unsigned long *p = (void *)md4;
+	unsigned long *p = (unsigned long *)md4;
 	MD4((unsigned char *)buf, size, md4);
 	return *p;
+}
+
+static unsigned long hashlittle_for_test( unsigned char *key, size_t length)
+{
+  uint32_t initval = 0x9e370001UL;
+  uint32_t a,b,c;                                          /* internal state */
+  union { const void *ptr; size_t i; } u;     /* needed for Mac Powerbook G4 */
+
+  /* Set up the internal state */
+  a = b = c = 0xdeadbeef + ((uint32_t)length) + initval;
+
+  u.ptr = key;
+  if (HASH_LITTLE_ENDIAN && ((u.i & 0x3) == 0)) {
+    const uint32_t *k = (const uint32_t *)key;         /* read 32-bit chunks */
+
+    /*------ all but last block: aligned reads and affect 32 bits of (a,b,c) */
+    while (length > 12)
+    {
+      a += k[0];
+      b += k[1];
+      c += k[2];
+      mix(a,b,c);
+      length -= 12;
+      k += 3;
+    }
+
+    /*----------------------------- handle the last (probably partial) block */
+    /* 
+     * "k[2]&0xffffff" actually reads beyond the end of the string, but
+     * then masks off the part it's not allowed to read.  Because the
+     * string is aligned, the masked-off tail is in the same word as the
+     * rest of the string.  Every machine with memory protection I've seen
+     * does it on word boundaries, so is OK with this.  But VALGRIND will
+     * still catch it and complain.  The masking trick does make the hash
+     * noticably faster for short strings (like English words).
+     */
+#ifndef VALGRIND
+
+    switch(length)
+    {
+    case 12: c+=k[2]; b+=k[1]; a+=k[0]; break;
+    case 11: c+=k[2]&0xffffff; b+=k[1]; a+=k[0]; break;
+    case 10: c+=k[2]&0xffff; b+=k[1]; a+=k[0]; break;
+    case 9 : c+=k[2]&0xff; b+=k[1]; a+=k[0]; break;
+    case 8 : b+=k[1]; a+=k[0]; break;
+    case 7 : b+=k[1]&0xffffff; a+=k[0]; break;
+    case 6 : b+=k[1]&0xffff; a+=k[0]; break;
+    case 5 : b+=k[1]&0xff; a+=k[0]; break;
+    case 4 : a+=k[0]; break;
+    case 3 : a+=k[0]&0xffffff; break;
+    case 2 : a+=k[0]&0xffff; break;
+    case 1 : a+=k[0]&0xff; break;
+    case 0 : return c;              /* zero length strings require no mixing */
+    }
+
+#else /* make valgrind happy */
+
+    k8 = (const uint8_t *)k;
+    switch(length)
+    {
+    case 12: c+=k[2]; b+=k[1]; a+=k[0]; break;
+    case 11: c+=((uint32_t)k8[10])<<16;  /* fall through */
+    case 10: c+=((uint32_t)k8[9])<<8;    /* fall through */
+    case 9 : c+=k8[8];                   /* fall through */
+    case 8 : b+=k[1]; a+=k[0]; break;
+    case 7 : b+=((uint32_t)k8[6])<<16;   /* fall through */
+    case 6 : b+=((uint32_t)k8[5])<<8;    /* fall through */
+    case 5 : b+=k8[4];                   /* fall through */
+    case 4 : a+=k[0]; break;
+    case 3 : a+=((uint32_t)k8[2])<<16;   /* fall through */
+    case 2 : a+=((uint32_t)k8[1])<<8;    /* fall through */
+    case 1 : a+=k8[0]; break;
+    case 0 : return c;
+    }
+
+#endif /* !valgrind */
+
+  } else if (HASH_LITTLE_ENDIAN && ((u.i & 0x1) == 0)) {
+    const uint16_t *k = (const uint16_t *)key;         /* read 16-bit chunks */
+    const uint8_t  *k8;
+
+    /*--------------- all but last block: aligned reads and different mixing */
+    while (length > 12)
+    {
+      a += k[0] + (((uint32_t)k[1])<<16);
+      b += k[2] + (((uint32_t)k[3])<<16);
+      c += k[4] + (((uint32_t)k[5])<<16);
+      mix(a,b,c);
+      length -= 12;
+      k += 6;
+    }
+
+    /*----------------------------- handle the last (probably partial) block */
+    k8 = (const uint8_t *)k;
+    switch(length)
+    {
+    case 12: c+=k[4]+(((uint32_t)k[5])<<16);
+             b+=k[2]+(((uint32_t)k[3])<<16);
+             a+=k[0]+(((uint32_t)k[1])<<16);
+             break;
+    case 11: c+=((uint32_t)k8[10])<<16;     /* fall through */
+    case 10: c+=k[4];
+             b+=k[2]+(((uint32_t)k[3])<<16);
+             a+=k[0]+(((uint32_t)k[1])<<16);
+             break;
+    case 9 : c+=k8[8];                      /* fall through */
+    case 8 : b+=k[2]+(((uint32_t)k[3])<<16);
+             a+=k[0]+(((uint32_t)k[1])<<16);
+             break;
+    case 7 : b+=((uint32_t)k8[6])<<16;      /* fall through */
+    case 6 : b+=k[2];
+             a+=k[0]+(((uint32_t)k[1])<<16);
+             break;
+    case 5 : b+=k8[4];                      /* fall through */
+    case 4 : a+=k[0]+(((uint32_t)k[1])<<16);
+             break;
+    case 3 : a+=((uint32_t)k8[2])<<16;      /* fall through */
+    case 2 : a+=k[0];
+             break;
+    case 1 : a+=k8[0];
+             break;
+    case 0 : return c;                     /* zero length requires no mixing */
+    }
+
+  } else {                        /* need to read the key one byte at a time */
+    const uint8_t *k = (const uint8_t *)key;
+
+    /*--------------- all but the last block: affect some 32 bits of (a,b,c) */
+    while (length > 12)
+    {
+      a += k[0];
+      a += ((uint32_t)k[1])<<8;
+      a += ((uint32_t)k[2])<<16;
+      a += ((uint32_t)k[3])<<24;
+      b += k[4];
+      b += ((uint32_t)k[5])<<8;
+      b += ((uint32_t)k[6])<<16;
+      b += ((uint32_t)k[7])<<24;
+      c += k[8];
+      c += ((uint32_t)k[9])<<8;
+      c += ((uint32_t)k[10])<<16;
+      c += ((uint32_t)k[11])<<24;
+      mix(a,b,c);
+      length -= 12;
+      k += 12;
+    }
+
+    /*-------------------------------- last block: affect all 32 bits of (c) */
+    switch(length)                   /* all the case statements fall through */
+    {
+    case 12: c+=((uint32_t)k[11])<<24;
+    case 11: c+=((uint32_t)k[10])<<16;
+    case 10: c+=((uint32_t)k[9])<<8;
+    case 9 : c+=k[8];
+    case 8 : b+=((uint32_t)k[7])<<24;
+    case 7 : b+=((uint32_t)k[6])<<16;
+    case 6 : b+=((uint32_t)k[5])<<8;
+    case 5 : b+=k[4];
+    case 4 : a+=((uint32_t)k[3])<<24;
+    case 3 : a+=((uint32_t)k[2])<<16;
+    case 2 : a+=((uint32_t)k[1])<<8;
+    case 1 : a+=k[0];
+             break;
+    case 0 : return c;
+    }
+  }
+
+  final(a,b,c);
+  return c;
 }
 
 static unsigned long crc_encode(unsigned char *buf, size_t size)
@@ -239,7 +409,7 @@ static inline uint32_t hash_long(uint32_t val, unsigned int bits)
 
 }
 
- __attribute__((unused)) static unsigned long libc_encode(unsigned char *buf, size_t size)
+static unsigned long libc_encode(unsigned char *buf, size_t size)
 {
 	unsigned long hval;
 	unsigned int count;
@@ -256,6 +426,77 @@ static inline uint32_t hash_long(uint32_t val, unsigned int bits)
 	return hval;
 }
 
+
+unsigned long MurmurHash3_x86_64_for_test (unsigned char *key, size_t len)
+{
+	const uint32_t seed = 0x9e370001UL;
+        const uint8_t * data = (const uint8_t*)key;
+        const int nblocks = len / 8;
+
+        uint32_t h1 = 0x8de1c3ac ^ seed;
+        uint32_t h2 = 0xbab98226 ^ seed;
+
+        uint32_t c1 = 0x95543787;
+        uint32_t c2 = 0x2ad7eb25;
+	int i;
+
+        //----------
+        // body
+
+        const uint32_t * blocks = (const uint32_t *)(data + nblocks*8);
+
+        for(i = -nblocks; i; i++)
+        {
+                uint32_t k1 = getblock(blocks,i*2+0);
+                uint32_t k2 = getblock(blocks,i*2+1);
+
+                bmix32(h1,h2,k1,k2,c1,c2);
+        }
+
+        //----------
+        // tail
+
+        const uint8_t * tail = (const uint8_t*)(data + nblocks*8);
+
+        uint32_t k1 = 0;
+        uint32_t k2 = 0;
+
+        switch(len & 7)
+        {
+        case 7: k2 ^= tail[6] << 16;
+        case 6: k2 ^= tail[5] << 8;
+        case 5: k2 ^= tail[4] << 0;
+        case 4: k1 ^= tail[3] << 24;
+        case 3: k1 ^= tail[2] << 16;
+        case 2: k1 ^= tail[1] << 8;
+        case 1: k1 ^= tail[0] << 0;
+                bmix32(h1,h2,k1,k2,c1,c2);
+        };
+
+        //----------
+        // finalization
+
+        h2 ^= len;
+
+        h1 += h2;
+        h2 += h1;
+
+        h1 = fmix32(h1);
+        h2 = fmix32(h2);
+
+        h1 += h2;
+        h2 += h1;
+
+
+	return h1;
+        //((uint32_t*)out)[0] = h1;
+        //((uint32_t*)out)[1] = h2;
+}
+
+static unsigned long kuth_simple_multiply(unsigned char *key, size_t len)
+{
+	return (*(int *)key) * 2654435761UL;
+}
 static unsigned long murmur_encode(unsigned char * key, size_t len)
 {
 	// 'm' and 'r' are mixing constants generated offline.
@@ -465,7 +706,10 @@ int main(int argc, char **argv)
 		m[8] = method_init("jenkins", sizes[cur_size], jenkins_encode);
 		m[9] = method_init("sfh", sizes[cur_size], super_fast_hash_encode);
 		m[10] = method_init("bacula hash", sizes[cur_size], bacula_hash);
-		m[12] = method_init("libc", sizes[cur_size], libc_encode);
+		m[11] = method_init("libc", sizes[cur_size], libc_encode);
+		m[12] = method_init("knuth simple multiply", sizes[cur_size], kuth_simple_multiply);
+		m[13] = method_init("hashlittle", sizes[cur_size], hashlittle_for_test);
+		m[14] = method_init("murmur3", sizes[cur_size], MurmurHash3_x86_64_for_test);
 
 		f = fopen(argv[1], "r");
 		if (!f) {
@@ -474,18 +718,25 @@ int main(int argc, char **argv)
 		}
 
 		/* Preload file */
+#if 0
 		while(fgets(buf, sizeof(buf), f)) { }
 		rewind(f);
+#endif
 
 		FOREACH(meth, m) {
+			int i;
 			clock_gettime(CLOCK_MONOTONIC, &before);
-			while(fgets(buf, sizeof(buf), f)) {
+			//while(fgets(buf, sizeof(buf), f)) {
+			for (i = 0; i < 10000; i++) {
+				int i = rand();
+				memcpy(buf, &i, sizeof(i));
 				method_hash(meth, (unsigned char *)buf, strlen(buf));
 			}
+			//}
 			clock_gettime(CLOCK_MONOTONIC, &after);
 			diff = ts_diff(before, after);
 			meth->avg_process_time = ts_2_ns(&diff) / meth->samples;
-			rewind(f);
+			//rewind(f);
 		} ENDFOREACH();
 
 
