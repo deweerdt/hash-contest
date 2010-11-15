@@ -501,7 +501,7 @@ static unsigned long murmur_encode(unsigned char * key, size_t len)
 {
 	// 'm' and 'r' are mixing constants generated offline.
 	// They're not really 'magic', they just happen to work well.
-	unsigned int seed = 0xfa;
+	unsigned int seed = 2654435761UL;
 	const unsigned int m = 0x5bd1e995;
 	const int r = 24;
 
@@ -730,7 +730,7 @@ int main(int argc, char **argv)
 			for (i = 0; i < 10000; i++) {
 				int i = rand();
 				memcpy(buf, &i, sizeof(i));
-				method_hash(meth, (unsigned char *)buf, strlen(buf));
+				method_hash(meth, (unsigned char *)buf, sizeof(i));
 			}
 			//}
 			clock_gettime(CLOCK_MONOTONIC, &after);
