@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#  define _GNU_SOURCE
+#endif
 #include <sched.h>
 #include <stdio.h>
 #include <zlib.h>
@@ -10,7 +13,8 @@
 #include <time.h>
 
 #include "loopkup3.c"
-#include "MurmurHash3.cpp"
+#include "murmurhash.h"
+#include "SpookyV2.h"
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]))
 #define MAX_COLL 1024
@@ -120,13 +124,13 @@ static void method_free(struct method *m)
 static void method_dump_stats(struct method *m)
 {
 	int *collisions;
-	int i;
-	int max_coll = 0;
+	unsigned int i;
+	unsigned int max_coll = 0;
 
 	collisions = (int *)calloc(sizeof(int), MAX_COLL);
 
 	for (i = 0; i < m->nb_buckets; i++) {
-		int coll;
+		unsigned int coll;
 		coll = m->bucket[i];
 
 		if (coll < 0 || coll >= MAX_COLL) {
@@ -427,72 +431,6 @@ static unsigned long libc_encode(unsigned char *buf, size_t size)
 }
 
 
-unsigned long MurmurHash3_x86_64_for_test (unsigned char *key, size_t len)
-{
-	const uint32_t seed = 0x9e370001UL;
-        const uint8_t * data = (const uint8_t*)key;
-        const int nblocks = len / 8;
-
-        uint32_t h1 = 0x8de1c3ac ^ seed;
-        uint32_t h2 = 0xbab98226 ^ seed;
-
-        uint32_t c1 = 0x95543787;
-        uint32_t c2 = 0x2ad7eb25;
-	int i;
-
-        //----------
-        // body
-
-        const uint32_t * blocks = (const uint32_t *)(data + nblocks*8);
-
-        for(i = -nblocks; i; i++)
-        {
-                uint32_t k1 = getblock(blocks,i*2+0);
-                uint32_t k2 = getblock(blocks,i*2+1);
-
-                bmix32(h1,h2,k1,k2,c1,c2);
-        }
-
-        //----------
-        // tail
-
-        const uint8_t * tail = (const uint8_t*)(data + nblocks*8);
-
-        uint32_t k1 = 0;
-        uint32_t k2 = 0;
-
-        switch(len & 7)
-        {
-        case 7: k2 ^= tail[6] << 16;
-        case 6: k2 ^= tail[5] << 8;
-        case 5: k2 ^= tail[4] << 0;
-        case 4: k1 ^= tail[3] << 24;
-        case 3: k1 ^= tail[2] << 16;
-        case 2: k1 ^= tail[1] << 8;
-        case 1: k1 ^= tail[0] << 0;
-                bmix32(h1,h2,k1,k2,c1,c2);
-        };
-
-        //----------
-        // finalization
-
-        h2 ^= len;
-
-        h1 += h2;
-        h2 += h1;
-
-        h1 = fmix32(h1);
-        h2 = fmix32(h2);
-
-        h1 += h2;
-        h2 += h1;
-
-
-	return h1;
-        //((uint32_t*)out)[0] = h1;
-        //((uint32_t*)out)[1] = h2;
-}
-
 static unsigned long kuth_simple_multiply(unsigned char *key, size_t len)
 {
 	return (*(int *)key) * 2654435761UL;
@@ -649,6 +587,16 @@ static unsigned long super_fast_hash_encode(unsigned char * data, size_t len)
 	return hash;
 }
 
+static unsigned long murmur_hash3(unsigned char *data, size_t len)
+{
+	return MurmurHash3(data, len, 1234);
+}
+
+static unsigned long spooky_hash(unsigned char *data, size_t len)
+{
+	return SpookyHash::Hash64(data, len, 1234);
+}
+
 /*
   Bacula project hash.c file:
   http://www.koders.com/c/fidBD2D6E36FB86821D1E65D1AFBB0E557896B14C7E.aspx?s=worker_main
@@ -681,7 +629,7 @@ int main(int argc, char **argv)
 {
 	FILE *f;
 	char buf[BUFSIZ];
-	int cur_size;
+	unsigned int cur_size;
 	int sizes[] = { 7919, 104729 };
 	struct method *m[MAX_METHODS] = { NULL, };
 
@@ -709,7 +657,8 @@ int main(int argc, char **argv)
 		m[11] = method_init("libc", sizes[cur_size], libc_encode);
 		m[12] = method_init("knuth simple multiply", sizes[cur_size], kuth_simple_multiply);
 		m[13] = method_init("hashlittle", sizes[cur_size], hashlittle_for_test);
-		m[14] = method_init("murmur3", sizes[cur_size], MurmurHash3_x86_64_for_test);
+		m[14] = method_init("murmur3", sizes[cur_size], murmur_hash3);
+		m[15] = method_init("spooky", sizes[cur_size], spooky_hash);
 
 		f = fopen(argv[1], "r");
 		if (!f) {
