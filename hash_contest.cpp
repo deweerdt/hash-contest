@@ -667,7 +667,7 @@ int main(int argc, char **argv)
 		}
 
 		/* Preload file */
-#if 0
+#if 1
 		while(fgets(buf, sizeof(buf), f)) { }
 		rewind(f);
 #endif
@@ -675,17 +675,17 @@ int main(int argc, char **argv)
 		FOREACH(meth, m) {
 			int i;
 			clock_gettime(CLOCK_MONOTONIC, &before);
-			//while(fgets(buf, sizeof(buf), f)) {
-			for (i = 0; i < 10000; i++) {
+			while(fgets(buf, sizeof(buf), f)) {
+			//for (i = 0; i < 10000; i++) {
 				int i = rand();
 				memcpy(buf, &i, sizeof(i));
 				method_hash(meth, (unsigned char *)buf, sizeof(i));
-			}
 			//}
+			}
 			clock_gettime(CLOCK_MONOTONIC, &after);
 			diff = ts_diff(before, after);
 			meth->avg_process_time = ts_2_ns(&diff) / meth->samples;
-			//rewind(f);
+			rewind(f);
 		} ENDFOREACH();
 
 
