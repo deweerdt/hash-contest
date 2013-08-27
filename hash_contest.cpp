@@ -616,6 +616,67 @@ static unsigned long bacula_hash(unsigned char * data, size_t len)
 	return hashvalue >> (sizeof(unsigned long) / 4);
 }
 
+static uint8_t dict_hash_function_seed[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+/* From REDIS's implementation https://github.com/PeterScott/redis/commit/bb93618df6a74c9767fc010adbdd7213724cfdb4 */
+unsigned long siphash(unsigned char *buf, size_t len)
+{
+	uint64_t n = len;
+	uint64_t v0, v1, v2, v3;
+	uint64_t k0, k1;
+	uint64_t mi, mask, length;
+	size_t i, k;
+
+
+	k0 = *((uint64_t*)(dict_hash_function_seed + 0));
+	k1 = *((uint64_t*)(dict_hash_function_seed + 8));
+
+	v0 = k0 ^ 0x736f6d6570736575ULL;
+	v1 = k1 ^ 0x646f72616e646f6dULL;
+	v2 = k0 ^ 0x6c7967656e657261ULL;
+	v3 = k1 ^ 0x7465646279746573ULL;
+
+#define rotl64(x, c) ( ((x) << (c)) ^ ((x) >> (64-(c))) )
+
+#define HALF_ROUND(a,b,c,d,s,t)      \
+	do {          \
+		a += b;  c += d;      \
+		b = rotl64(b, s); d = rotl64(d, t);  \
+		b ^= a;  d ^= c;      \
+	} while(0)
+
+#define COMPRESS(v0,v1,v2,v3)      \
+	do {          \
+		HALF_ROUND(v0,v1,v2,v3,13,16);    \
+		v0 = rotl64(v0,32);      \
+		HALF_ROUND(v2,v1,v0,v3,17,21);    \
+		v2 = rotl64(v2, 32);      \
+	} while(0)
+
+	for (i = 0; i < (n-n%8); i += 8) {
+		mi = *((uint64_t*)(buf + i));
+		v3 ^= mi;
+		for (k = 0; k < 2; ++k) COMPRESS(v0,v1,v2,v3);
+		v0 ^= mi;
+	}
+
+
+	mi = *((uint64_t*)(buf + i));
+	length = (n&0xff) << 56;
+	mask = n%8 == 0 ? 0 : 0xffffffffffffffffULL >> (8*(8-n%8));
+	mi = (mi&mask) ^ length;
+
+	v3 ^= mi;
+	for (k = 0; k < 2; ++k) COMPRESS(v0,v1,v2,v3);
+	v0 ^= mi;
+
+	v2 ^= 0xff;
+	for (k = 0; k < 4; ++k) COMPRESS(v0,v1,v2,v3);
+
+#undef rotl64
+#undef COMPRESS
+#undef HALF_ROUND
+	return (unsigned long)((v0 ^ v1) ^ (v2 ^ v3));
+}
 
 #define FOREACH(ele, array) do { \
 	int n; \
@@ -659,6 +720,7 @@ int main(int argc, char **argv)
 		m[13] = method_init("hashlittle", sizes[cur_size], hashlittle_for_test);
 		m[14] = method_init("murmur3", sizes[cur_size], murmur_hash3);
 		m[15] = method_init("spooky", sizes[cur_size], spooky_hash);
+		m[16] = method_init("siphash", sizes[cur_size], siphash);
 
 		f = fopen(argv[1], "r");
 		if (!f) {
@@ -673,7 +735,7 @@ int main(int argc, char **argv)
 #endif
 
 		FOREACH(meth, m) {
-			int i;
+			//int i;
 			clock_gettime(CLOCK_MONOTONIC, &before);
 			while(fgets(buf, sizeof(buf), f)) {
 			//for (i = 0; i < 10000; i++) {
