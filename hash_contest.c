@@ -427,6 +427,76 @@ static unsigned long bacula_hash(unsigned char * data, size_t len)
 	return hashvalue >> (sizeof(unsigned long) / 4);
 }
 
+/*
+ * SuperFastHash by Paul Hseih:
+ *   http://www.azillionmonkeys.com/qed/hash.html
+ *
+ * Licensed under BSD according to the following clause from:
+ *   http://www.azillionmonkeys.com/qed/weblicense.html
+ * "If your code is compatible with the old style BSD license and you wish
+ *  to avoid the burden of explicitely protecting code you obtained from
+ *  here from misrepresentation then you can simply cover it with
+ *  the old-style BSD license."
+ */
+
+
+#undef get16bits
+#if (defined(__GNUC__) && defined(__i386__)) || defined(__WATCOMC__) \
+  || defined(_MSC_VER) || defined (__BORLANDC__) || defined (__TURBOC__)
+#define get16bits(d) (*((const uint16_t *) (d)))
+#endif
+
+#if !defined (get16bits)
+#define get16bits(d) ((((uint32_t)(((const uint8_t *)(d))[1])) << 8)\
+                       +(uint32_t)(((const uint8_t *)(d))[0]) )
+#endif
+
+uint32_t SuperFastHash (const char * data, int len) {
+    uint32_t hash = len, tmp;
+    int rem;
+
+    if (len <= 0 || data == NULL) return 0;
+
+    rem = len & 3;
+    len >>= 2;
+
+    /* Main loop */
+    for (;len > 0; len--) {
+        hash  += get16bits (data);
+        tmp    = (get16bits (data+2) << 11) ^ hash;
+        hash   = (hash << 16) ^ tmp;
+        data  += 2*sizeof (uint16_t);
+        hash  += hash >> 11;
+    }
+
+    /* Handle end cases */
+    switch (rem) {
+        case 3: hash += get16bits (data);
+                hash ^= hash << 16;
+                hash ^= data[sizeof (uint16_t)] << 18;
+                hash += hash >> 11;
+                break;
+        case 2: hash += get16bits (data);
+                hash ^= hash << 11;
+                hash += hash >> 17;
+                break;
+        case 1: hash += *data;
+                hash ^= hash << 10;
+                hash += hash >> 1;
+    }
+
+    /* Force "avalanching" of final 127 bits */
+    hash ^= hash << 3;
+    hash += hash >> 5;
+    hash ^= hash << 4;
+    hash += hash >> 17;
+    hash ^= hash << 25;
+    hash += hash >> 6;
+
+    return hash;
+}
+
+
 
 #define FOREACH(ele, array) do { \
 	int n; \
@@ -466,6 +536,7 @@ int main(int argc, char **argv)
 		m[9] = method_init("sfh", sizes[cur_size], super_fast_hash_encode);
 		m[10] = method_init("bacula hash", sizes[cur_size], bacula_hash);
 		m[12] = method_init("libc", sizes[cur_size], libc_encode);
+		m[13] = method_init("superfasthash", sizes[cur_size], libc_encode);
 
 		f = fopen(argv[1], "r");
 		if (!f) {
