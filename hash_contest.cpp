@@ -806,14 +806,9 @@ int main(int argc, char **argv)
 #endif
 
 		FOREACH(meth, m) {
-			//int i;
 			clock_gettime(CLOCK_MONOTONIC, &before);
 			while(fgets(buf, sizeof(buf), f)) {
-			//for (i = 0; i < 10000; i++) {
-				int i = rand();
-				memcpy(buf, &i, sizeof(i));
-				method_hash(meth, (unsigned char *)buf, sizeof(i));
-			//}
+				method_hash(meth, (unsigned char *)buf, strlen(buf));
 			}
 			clock_gettime(CLOCK_MONOTONIC, &after);
 			diff = ts_diff(before, after);
