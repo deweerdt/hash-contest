@@ -15,6 +15,7 @@
 #include "loopkup3.c"
 #include "murmurhash.h"
 #include "SpookyV2.h"
+#include "rapidhash.h"
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]))
 #define MAX_COLL 1024
@@ -747,7 +748,10 @@ uint32_t SuperFastHash (const char * data, int len) {
     return hash;
 }
 
-
+unsigned long do_rapidhash(unsigned char *buf, size_t len)
+{
+	return rapidhash(buf, len);
+}
 #define FOREACH(ele, array) do { \
 	int n; \
 	typeof(array[0]) ele; \
@@ -792,6 +796,7 @@ int main(int argc, char **argv)
 		m[15] = method_init("spooky", sizes[cur_size], spooky_hash);
 		m[16] = method_init("siphash", sizes[cur_size], siphash);
 		m[17] = method_init("superfasthash", sizes[cur_size], libc_encode);
+		m[18] = method_init("rapidhash", sizes[cur_size], do_rapidhash);
 
 		f = fopen(argv[1], "r");
 		if (!f) {
